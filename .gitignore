@@ -1,1 +1,10 @@
-.DS_Store
+.env
+.env.*
+node_modules/
+target/
+*.class
+*.jar
+__pycache__/
+*.pyc
+.idea/
+.vscode/
