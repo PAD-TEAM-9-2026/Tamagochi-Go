@@ -61,8 +61,8 @@ Package Registry holds configuration, the runtime services hold state.
 | Battle | C#, ASP.NET Core | PostgreSQL | Turn state and settlement retries, same reason |
 | Tamagotchi | TypeScript, Node.js, Express, Zod | PostgreSQL | Mostly reads and writes rows; JSONB stores package stats with no fixed shape |
 | Notification | TypeScript, Node.js, Express, Firebase Admin | PostgreSQL | Waits on the network, never computes |
-| Guild | TypeScript, Node.js, NestJS, WebSocket | PostgreSQL | Chat needs many open connections |
-| Package Registry | TypeScript, Node.js, NestJS | PostgreSQL | Config documents differ per package |
+| Guild | TypeScript, Node.js, Express, WebSocket | PostgreSQL | Chat needs many open connections |
+| Package Registry | TypeScript, Node.js, Express| PostgreSQL | Config documents differ per package |
 | Map | C#, ASP.NET Core, EF Core | PostgreSQL with PostGIS | Distance queries need a spatial index |
 | Monster Raid | C#, ASP.NET Core, EF Core | PostgreSQL | Counters under concurrent attacks |
 
