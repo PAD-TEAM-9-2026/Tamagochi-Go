@@ -1,0 +1,6 @@
+[submodule "services/map"]
+	path = services/map
+	url = git@github.com:sergedbs/map.git
+[submodule "services/monster-raid"]
+	path = services/monster-raid
+	url = git@github.com:sergedbs/monster-raid.git
