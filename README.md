@@ -24,7 +24,7 @@ them, not teammates. They are linked here as submodules.
 | User Management | `services/user-management` | Patricia |
 | Battle | `services/battle` | Patricia |
 | Tamagotchi | `services/tamagotchi` | Victoria |
-| Notification | `services/notification` | Victoria |
+| Notification | `services/notifications` | Victoria |
 | Guild | `services/guild` | Mihaela |
 | Package Registry | `services/package-registry` | Mihaela |
 | Map | `services/map` | Sergiu |
