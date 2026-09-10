@@ -4,3 +4,9 @@
 [submodule "services/monster-raid"]
 	path = services/monster-raid
 	url = git@github.com:sergedbs/monster-raid.git
+[submodule "services/tamagotchi"]
+	path = services/tamagotchi
+	url = https://github.com/victoriaaa111/tamagotchi.git
+[submodule "services/notifications"]
+	path = services/notifications
+	url = https://github.com/victoriaaa111/notifications.git
