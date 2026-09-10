@@ -51,7 +51,31 @@ Package Registry holds configuration, the runtime services hold state.
 
 ## Architecture
 
-//TO DO
+![Tamagotchi Go architecture — 8 microservices, PostgreSQL per service, RabbitMQ event bus](docs/img/architecture_diagram.png)
+
+Every client goes through the HTTP Gateway. It routes by path prefix to the eight
+services, so a frontend package never learns where a service lives or how many
+replicas answer.
+
+The dashed box holds the services themselves. Each one owns a single database on
+a shared PostgreSQL server, with its own user and grants, so there is no
+cross-service SQL. When a service needs something it does not own, it asks the
+owner over HTTP: Battle reserves pets and writes XP through Tamagotchi, Monster
+Raid checks guild membership with Guild, Map resolves relationships through User
+Management, and everyone reads combat rules, stat definitions and starter config
+from Package Registry. Those calls are synchronous because the caller cannot
+continue without the answer.
+
+Everything that already happened goes on the bus instead. All seven domain
+services publish committed facts to RabbitMQ, and the consumers decide what
+matters to them. Notification is the largest one: it turns those facts into
+delivery fan-out and pushes to phones through Firebase Cloud Messaging, without
+any publisher knowing it exists. Registry also keeps a membership projection
+from User Management events, so package eligibility checks stay local.
+
+The one edge drawn in red is the exception to the usual flow: the membership
+projection rebuild between User Management and Registry, used to repair that
+copy when it drifts.
 
 ## Technologies
 
