@@ -10,3 +10,9 @@
 [submodule "services/notifications"]
 	path = services/notifications
 	url = https://github.com/victoriaaa111/notifications.git
+[submodule "services/guild"]
+	path = services/guild
+	url = https://github.com/MihaelaCatan04/guild-service.git
+[submodule "services/package-registry"]
+	path = services/package-registry
+	url = https://github.com/MihaelaCatan04/package-registry-service.git
