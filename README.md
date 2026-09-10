@@ -38,8 +38,8 @@ service's tables.
 | Service | Owns | Does not own |
 |---|---|---|
 | User Management | Accounts, login, JWT issuing, friends, enemies, global and local currency, which packages a user joined | Anything about creatures or battles |
-| Tamagotchi | Creatures, owner, primary and secondary role, combat type, level, XP, raw package stats | Damage, battle outcome, what the stats mean |
-| Battle | Challenges, turns, damage, who won, XP split, capture decision | Creature state, currency balances |
+| Tamagotchi | Creatures, origin owner, holder set, primary and secondary role, combat type, level, XP, raw package stats | Damage, battle outcome, what the stats mean |
+| Battle | Challenges, turns, damage, who won, XP split, access grant decision | Creature state, currency balances |
 | Guild | Guilds, members, roles, invitations, chat | User identity, raid state |
 | Package Registry | Packages, stat definitions, bonus rules, starter config, assets, bosses, raid schedule | User data, live raids |
 | Map | Latest locations, freshness, who is nearby | Friend lists, battles |
@@ -48,6 +48,49 @@ service's tables.
 
 Two rules keep the boundaries honest. Battle decides, Tamagotchi applies.
 Package Registry holds configuration, the runtime services hold state.
+
+A third rule follows from the shared-access model described below: a creature is
+never moved, only shared. No service transfers ownership, and no service deletes
+a creature as the result of a battle.
+
+## Shared access
+
+Winning a battle does not take the loser's creature away. It adds the winner to
+that creature's **holder set**. There is still exactly one creature row, with one
+level, one XP total and one set of package stats, and every holder sees the same
+values. Nothing is split, because nothing is copied.
+
+| Concept | Rule |
+|---|---|
+| `origin_owner_id` | The user the creature was minted for. Immutable, never changes for any reason |
+| `holder_user_ids` | Everyone who may use, care for and select the creature. Contains the origin owner from the moment it is minted |
+| Holder cap | **5.** A win against a creature that already has five holders grants global currency instead of access |
+| Spread | Access is granted only to the winner of a battle the creature was staked in. It is never revoked, and holders cannot grant it to anyone else |
+| Dropping access | A holder may remove themselves. The origin owner may not, so a creature always has at least one holder |
+| Care | Any holder may run care actions. There is one hunger value and everyone shares the consequences |
+| Primary selection | Per user, and it may point at any creature the user holds. The same creature may be the primary of several users at once |
+
+The cap is what keeps a win meaningful. Without it every creature drifts toward
+being held by everyone and the stake disappears; five is high enough that sharing
+still spreads and low enough that a strong creature stays worth fighting for.
+
+Shared care is deliberately unguarded. A co-holder can let a shared creature go
+hungry, and that is part of the mechanic rather than an oversight.
+
+**One battle at a time.** A creature is exclusive while it fights: it can be in
+at most one battle or raid, and a second attempt to field it is refused with
+`409 creature_engaged`. Because a creature can now have five holders, three rules
+stop that lock from becoming a way to grief the others:
+
+- The lock is taken at `accept`, not when the challenge is created, so an unanswered challenge never blocks anyone.
+- A challenge expires after 2 minutes unaccepted, and an accepted battle auto-forfeits after its turn timer runs out, so a disconnected player cannot hold a shared creature forever.
+- A user may hold at most one pending challenge per creature, so one holder cannot queue several and occupy it by rotation.
+
+**No last-creature case.** Because a battle never removes a creature from anyone,
+a collection cannot be emptied by losing. The only way to end up with nothing is
+to drop access to everything, which the origin owner cannot do for their own
+creature. The rejoin path and its 24 hour cooldown existed only to repair a
+collection emptied by loss, and both are gone.
 
 ## Architecture
 
@@ -60,7 +103,8 @@ replicas answer.
 The dashed box holds the services themselves. Each one owns a single database on
 a shared PostgreSQL server, with its own user and grants, so there is no
 cross-service SQL. When a service needs something it does not own, it asks the
-owner over HTTP: Battle reserves pets and writes XP through Tamagotchi, Monster
+owner over HTTP: Battle reserves pets, writes XP and grants access through
+Tamagotchi, Monster
 Raid checks guild membership with Guild, Map resolves relationships through User
 Management, and everyone reads combat rules, stat definitions and starter config
 from Package Registry. Those calls are synchronous because the caller cannot
@@ -112,8 +156,8 @@ How services talk:
 | One way notification | One to one, asynchronous, through a third party | Firebase Cloud Messaging | Push to a phone that is not running the app |
 
 A battle cannot start without the participants, so that call is synchronous. A
-capture is a fact, not a request, so it is an event and the publisher does not
-need to know who reacts.
+granted access is a fact, not a request, so it is an event and the publisher does
+not need to know who reacts.
 
 Named patterns we use:
 
@@ -182,7 +226,11 @@ Every service also exposes `GET /health` and `GET /ready`, returning 200 or 503.
   "id": "0192f3c4-77a1-7b28-b0c4-1f2a5e9d3c07",
   "name": "Ember",
   "origin_package_id": "0192f3c1-8a44-7c31-9e02-6b1d4f8a2c11",
-  "owner_user_id": "0192f3c2-1b09-7f5a-8d33-2e7c9a04b6df",
+  "origin_owner_id": "0192f3c2-1b09-7f5a-8d33-2e7c9a04b6df",
+  "holder_user_ids": [
+    "0192f3c2-1b09-7f5a-8d33-2e7c9a04b6df",
+    "0192f3c8-5d12-7a44-9c81-3b6e0f2a91c5"
+  ],
   "role": "PRIMARY",
   "combat_type": "FLAME",
   "level": 12,
@@ -210,7 +258,7 @@ Every service also exposes `GET /health` and `GET /ready`, returning 200 or 503.
 // Event envelope, any publisher
 {
   "event_id": "0192f3d5-9e02-7c88-b134-7a6f2e5d8c31",
-  "event_type": "tamagotchi.ownership_transferred.v1",
+  "event_type": "tamagotchi.access_granted.v1",
   "occurred_at": "2026-09-07T19:03:52.884Z",
   "producer": "tamagotchi-service",
   "correlation_id": "0192f3d0-4c67-7a19-9b55-8e3f1a7c2d40",
@@ -231,7 +279,6 @@ Every service also exposes `GET /health` and `GET /ready`, returning 200 or 503.
 | `GET /v1/users/me` | none | 200 User | user |
 | `GET /v1/users/{userId}` | none | 200 UserProfile | user or service |
 | `POST /v1/users/me/packages` | JoinPackage, Idempotency-Key | 200 User | user |
-| `GET /v1/users/me/packages/{packageId}/rejoin-status` | none | 200 RejoinStatus | user |
 | `GET /v1/internal/memberships` | query limit, cursor | 200 MembershipPage | service |
 | `GET /v1/internal/users/{userId}/membership` | none | 200 MembershipSnapshot | service |
 | `GET /v1/users/{userId}/relationships` | query limit, cursor | 200 RelationshipPage | user or service |
@@ -251,10 +298,17 @@ Every service also exposes `GET /health` and `GET /ready`, returning 200 or 503.
 | `GET /v1/users/me/boosts` | query limit, cursor | 200 BoostPage | user |
 | `POST /v1/internal/boost-consumptions` | ConsumeBoost, Idempotency-Key | 200 BoostReceipt | service |
 
-Joining a package the user already left is how a player with an empty collection
-gets a new starter. It is refused with 409 while the 24 hour cooldown on that
-package is still running, and `rejoin-status` tells the client when it expires
-so it can show the wait instead of failing the call.
+Joining a package grants that package's starter once per user per package, and
+that is the only path by which a creature is minted for a player. There is no
+rejoin path, no starter regrant and no cooldown: since a battle never empties a
+collection, none of that has anything left to repair.
+
+`POST /v1/internal/battle-settlements` moves global currency only. The creature
+side of a battle is settled by Battle calling Tamagotchi, and this service is
+never told which creature was staked.
+
+A win against a creature that has already reached the holder cap is compensated
+here instead, as a global currency credit with reason `BATTLE_ACCESS_CAP`.
 
 ### Tamagotchi, `/tamagotchi`
 
@@ -262,10 +316,12 @@ so it can show the wait instead of failing the call.
 |---|---|---|---|
 | `POST /v1/tamagotchis` | Mint, Idempotency-Key | 201 Tamagotchi | service |
 | `GET /v1/tamagotchis/{id}` | none | 200 Tamagotchi | user or service |
-| `GET /v1/tamagotchis` | query owner_id, package_id, type, limit, cursor | 200 TamagotchiPage | user |
+| `GET /v1/tamagotchis` | query holder_id, package_id, type, limit, cursor | 200 TamagotchiPage | user |
 | `POST /v1/tamagotchis/{id}/care` | CareInput, Idempotency-Key | 200 CareReceipt | user |
 | `POST /v1/tamagotchis/{id}/xp` | XpInput, Idempotency-Key | 200 XpReceipt | service |
-| `POST /v1/tamagotchis/{id}/transfer` | TransferInput, Idempotency-Key | 200 TransferReceipt | service |
+| `POST /v1/tamagotchis/{id}/holders` | GrantAccessInput, Idempotency-Key | 200 AccessGrantReceipt | service |
+| `GET /v1/tamagotchis/{id}/holders` | none | 200 Holders | user or service |
+| `DELETE /v1/tamagotchis/{id}/holders/{userId}` | If-Match | 204 | user |
 | `GET /v1/users/{userId}/collection` | query limit, cursor, expand | 200 Collection | user or service |
 | `GET /v1/users/{userId}/collection/primary` | none | 200 PrimarySelection | user |
 | `PUT /v1/users/{userId}/collection/primary` | PrimaryInput, If-Match | 200 PrimarySelection | user |
@@ -279,24 +335,39 @@ so it can show the wait instead of failing the call.
 `package_stats` is stored as it arrives and returned as stored. This service
 never reads inside it. Package Registry owns what the fields mean.
 
+`POST /holders` is the only way the holder set grows, it is called by Battle at
+settlement, and it is idempotent in three directions: a repeat with the same
+`Idempotency-Key` returns the first receipt, a grant to someone who already holds
+the creature returns `ALREADY_HOLDER` and changes nothing, and a grant to a
+creature at the cap of five returns `CAP_REACHED` and changes nothing. Battle
+reads that outcome and credits currency instead when the cap was reached.
+
+`DELETE /holders/{userId}` lets a holder drop a creature they no longer want. A
+user may only remove themselves, and the request is refused with `409` when the
+caller is the creature's `origin_owner_id`, so every creature keeps at least one
+holder and no creature is ever orphaned.
+
+`role` in a `Tamagotchi` response is relative to the user the request is made
+for, because primary is a per-user selection. The same creature comes back as
+`PRIMARY` for one holder and `SECONDARY` for another, and `GET /collection`
+splits it accordingly.
+
 Level is global. One XP table lives here, and a package decides how much XP its
 care actions award, never what a level is worth. `sprite_ref` is a logical id,
 resolved by the client through Package Registry's public asset manifest, so a
-creature captured across packages still renders.
+creature shared across packages still renders.
 
-**Losing the last creature.** `POST /transfer` reassigns the creature and
-promotes the loser's highest-level remaining secondary. If they hold none their
-collection is empty, and no replacement is minted here. They recover by
-rejoining their package, which grants that package's starter at level 1. The
-starter grant is normally once per user per package; the exception is a user
-with an empty collection, who may be granted again.
+**Engagements.** `POST /internal/engagements` is the exclusive lock described in
+[Shared access](#shared-access). Battle calls it when a challenge is accepted,
+not when it is created, and it reserves all four creatures of both lineups at
+once. If any of them is already engaged the whole call is refused with
+`409 creature_engaged` and nothing is reserved, so a battle never starts
+half-locked. An engagement carries an `expires_at`; once it passes, the lock is
+released by the owner even if Battle never called `/release`, so a crashed battle
+cannot strand a shared creature.
 
-Rejoining is a real downgrade, since a level 12 creature is replaced by a level
-1 one, and it cannot be used to farm free creatures because the grant is refused
-while the collection is not empty. A 24 hour cooldown on rejoining the same
-package, held by User Management, stops repeat abuse. We chose a cooldown over a
-currency charge because a player with no currency and no creature would have no
-way back at all.
+Monster Raid takes the same lock for a primary contributed to a raid, which is
+why a creature cannot be in a raid and a battle at the same time.
 
 ### Battle, `/battle`
 
@@ -309,6 +380,26 @@ way back at all.
 | `POST /v1/battles/{battleId}/reject` | Idempotency-Key | 200 Battle | user |
 | `POST /v1/battles/{battleId}/attack` | ActorInput, Idempotency-Key | 200 BattleAttack | user |
 | `POST /v1/battles/{battleId}/forfeit` | Idempotency-Key | 200 Battle | user |
+
+**What is at stake.** Each side names its `primary_id` and `secondary_id` when
+challenging or accepting, and the primary is the creature at stake. Both are
+validated against the caller's holder set, so a player may field any creature
+they hold, including one they won from someone else. A creature is not refused
+for being shared with the opponent already, but a grant to a user who is already
+a holder is a no-op, so nothing is gained by fighting for one twice.
+
+**Settlement is three calls and one event.** Battle credits the winner and debits
+the loser through User Management, writes the XP split through Tamagotchi at
+60/40 between primary and secondary, and calls `POST /tamagotchis/{id}/holders`
+to add the winner to the loser's primary. If that grant comes back `CAP_REACHED`,
+Battle credits the winner global currency with reason `BATTLE_ACCESS_CAP`
+instead. `settlement_status` and `access_grant_status` on the battle track the
+two halves separately, since either can be retried alone.
+
+**Timers.** A challenge expires 2 minutes after creation if it is not accepted,
+and an accepted battle whose turn timer runs out is auto-forfeited. Both exist to
+release the engagement lock, and both are enforced here rather than in Tamagotchi
+because Battle owns the turn state.
 
 ### Guild, `/guild`
 
@@ -365,6 +456,16 @@ on who a user is and who they are friends with.
 | `POST /v1/raid-occurrences/{id}/deactivate` | Idempotency-Key | 200 OccurrenceReceipt | admin |
 | `POST /v1/raid-occurrences/{id}/cancel` | Idempotency-Key | 200 OccurrenceReceipt | admin |
 
+Packages are abstract to this backend. A package defines its own creatures, art
+and care rules in its own frontend, and nothing here knows what `hunger` or
+`discipline` is supposed to mean. What Registry stores is a *declaration*: a
+`StatDefinition` gives a key a type and bounds so a value can be validated, and a
+`BonusRule` is a generic comparison — stat key, operator, threshold, effect,
+value in basis points. Battle evaluates those rules mechanically against the
+creature's `package_stats` without interpreting any of them, which is how a
+package-specific bonus applies without any service sharing the package's data
+model.
+
 ### Map, `/map`
 
 | Method and path | Request | Response | Access |
@@ -384,6 +485,11 @@ within 6 metres, which is configurable.
 | `GET /v1/raids/{raidId}` | none | 200 Raid | user or service |
 | `POST /v1/raids/{raidId}/attack` | ActorInput, Idempotency-Key | 200 RaidAttack | user |
 | `GET /v1/raids/{raidId}/leaderboard` | query limit, cursor | 200 Leaderboard | user or service |
+
+A member contributes their primary, which is reserved through the same
+`POST /internal/engagements` lock Battle uses, so a creature cannot fight a boss
+and a player at once. A shared creature may be contributed by whichever holder
+fields it first; the others get `409 creature_engaged` until the raid ends.
 
 ### Notification, `/notification`
 
@@ -406,7 +512,7 @@ frontend.
 {
   "token": "fH9k...",
   "data": {
-    "type": "TAMAGOTCHI_CAPTURED",
+    "type": "TAMAGOTCHI_SHARED",
     "notification_id": "0192f3e4-6b71-7d92-a3c5-8e1f4b2d7a90",
     "params": "{\"tamagotchi_name\":\"Ember\",\"level\":3}"
   },
@@ -422,10 +528,10 @@ nothing. Each event payload is an `...Event` shape in
 
 | Routing key | Publisher | Consumer | Purpose |
 |---|---|---|---|
-| `user.package_joined.v1` | User Management | Tamagotchi, Package Registry | Grant the package starter if the user has none for it, or if their collection is empty. Update the membership projection |
+| `user.package_joined.v1` | User Management | Tamagotchi, Package Registry | Grant the package starter if the user has none for it. Update the membership projection |
 | `user.friend_request_created.v1` | User Management | Notification | FRIEND_REQUEST |
 | `tamagotchi.created.v1` | Tamagotchi | audit | A creature was minted |
-| `tamagotchi.ownership_transferred.v1` | Tamagotchi | Notification | TAMAGOTCHI_CAPTURED, sent to the previous owner |
+| `tamagotchi.access_granted.v1` | Tamagotchi | Notification | TAMAGOTCHI_SHARED, sent to every holder the creature already had |
 | `tamagotchi.leveled_up.v1` | Tamagotchi | audit | Level threshold crossed |
 | `battle.request_created.v1` | Battle | Notification | BATTLE_REQUEST |
 | `battle.completed.v1` | Battle | audit | Battle resolved |

@@ -112,7 +112,7 @@ database.
 | Field | Type / constraint | Required |
 |---|---|---|
 | `amount` | integer [0..1000000] | yes |
-| `reason` | RAID_WIN | yes |
+| `reason` | RAID_WIN / BATTLE_ACCESS_CAP | yes |
 | `reference_id` | uuid (v7) | yes |
 
 ### CreditReceipt
@@ -225,14 +225,6 @@ database.
 | `global_currency` | integer [0..9007199254740991] | yes |
 | `starter_status` | PENDING | yes |
 
-### RejoinStatus
-
-| Field | Type / constraint | Required |
-|---|---|---|
-| `package_id` | uuid (v7) | yes |
-| `can_rejoin` | boolean | yes |
-| `cooldown_expires_at` | timestamp (ISO 8601 UTC) or null | yes |
-
 ### Relationship
 
 | Field | Type / constraint | Required |
@@ -328,6 +320,18 @@ database.
 
 ## Tamagotchi
 
+### AccessGrantReceipt
+
+| Field | Type / constraint | Required |
+|---|---|---|
+| `id` | uuid (v7) | yes |
+| `outcome` | GRANTED / ALREADY_HOLDER / CAP_REACHED | yes |
+| `granted_to_user_id` | uuid (v7) | yes |
+| `holder_user_ids` | array<uuid (v7)> [1..5] | yes |
+| `holder_cap` | 5 | yes |
+| `version` | integer [1..2147483647] | yes |
+| `granted_at` | timestamp (ISO 8601 UTC) | yes |
+
 ### CareInput
 
 | Field | Type / constraint | Required |
@@ -357,17 +361,40 @@ database.
 | Field | Type / constraint | Required |
 |---|---|---|
 | `engagement_id` | uuid (v7) | yes |
-| `battle_id` | uuid (v7) | yes |
-| `status` | ACTIVE / RELEASED | yes |
-| `pets` | array<Tamagotchi> [4..4] | yes |
+| `source` | BATTLE / RAID | yes |
+| `reference_id` | uuid (v7) | yes |
+| `status` | ACTIVE / RELEASED / EXPIRED | yes |
+| `pets` | array<Tamagotchi> [1..4] | yes |
 | `created_at` | timestamp (ISO 8601 UTC) | yes |
+| `expires_at` | timestamp (ISO 8601 UTC) | yes |
 
 ### EngagementInput
 
 | Field | Type / constraint | Required |
 |---|---|---|
-| `battle_id` | uuid (v7) | yes |
-| `lineups` | array<Lineup> [2..2] | yes |
+| `source` | BATTLE / RAID | yes |
+| `reference_id` | uuid (v7) | yes |
+| `lineups` | array<Lineup> [1..2] | yes |
+| `ttl_seconds` | integer [30..3600] | yes |
+
+### GrantAccessInput
+
+| Field | Type / constraint | Required |
+|---|---|---|
+| `to_user_id` | uuid (v7) | yes |
+| `reason` | BATTLE_LOSS | yes |
+| `reference_id` | uuid (v7) | yes |
+| `engagement_id` | uuid (v7) | yes |
+
+### Holders
+
+| Field | Type / constraint | Required |
+|---|---|---|
+| `tamagotchi_id` | uuid (v7) | yes |
+| `origin_owner_id` | uuid (v7) | yes |
+| `holder_user_ids` | array<uuid (v7)> [1..5] | yes |
+| `holder_cap` | 5 | yes |
+| `version` | integer [1..2147483647] | yes |
 
 ### Lineup
 
@@ -375,13 +402,13 @@ database.
 |---|---|---|
 | `user_id` | uuid (v7) | yes |
 | `primary_id` | uuid (v7) | yes |
-| `secondary_id` | uuid (v7) | yes |
+| `secondary_id` | uuid (v7) | no |
 
 ### Mint
 
 | Field | Type / constraint | Required |
 |---|---|---|
-| `owner_user_id` | uuid (v7) | yes |
+| `origin_owner_id` | uuid (v7) | yes |
 | `package_id` | uuid (v7) | yes |
 
 ### PrimaryInput
@@ -406,7 +433,8 @@ database.
 | `name` | string [1..64] | yes |
 | `origin_package_id` | uuid (v7) | yes |
 | `config_version` | integer [1..2147483647] | yes |
-| `owner_user_id` | uuid (v7) | yes |
+| `origin_owner_id` | uuid (v7) | yes |
+| `holder_user_ids` | array<uuid (v7)> [1..5] | yes |
 | `role` | PRIMARY / SECONDARY | yes |
 | `combat_type` | FLAME / NATURE / EARTH / ELECTRIC / WATER / SHADOW | yes |
 | `level` | integer [1..100] | yes |
@@ -415,6 +443,17 @@ database.
 | `package_stats` | map<string, ['number', 'string', 'boolean']> (bounded by schema) | yes |
 | `acquired_at` | timestamp (ISO 8601 UTC) | yes |
 | `version` | integer [1..2147483647] | yes |
+
+### TamagotchiAccessGrantedEvent
+
+| Field | Type / constraint | Required |
+|---|---|---|
+| `event_id` | uuid (v7) | yes |
+| `event_type` | "tamagotchi.access_granted.v1" | yes |
+| `occurred_at` | timestamp (ISO 8601 UTC) | yes |
+| `producer` | "tamagotchi" | yes |
+| `correlation_id` | uuid (v7) | yes |
+| `data` | object {tamagotchi_id: uuid (v7), tamagotchi_name: string [1..64], combat_type: FLAME / NATURE / EARTH / ELECTRIC / WATER / SHADOW, level: integer [1..100], granted_to_user_id: uuid (v7), notify_user_ids: array<uuid (v7)> [1..4], holder_user_ids: array<uuid (v7)> [2..5], reason: "BATTLE_LOSS", battle_id: uuid (v7)} | yes |
 
 ### TamagotchiCreatedEvent
 
@@ -425,7 +464,7 @@ database.
 | `occurred_at` | timestamp (ISO 8601 UTC) | yes |
 | `producer` | "tamagotchi" | yes |
 | `correlation_id` | uuid (v7) | yes |
-| `data` | object {tamagotchi_id: uuid (v7), owner_user_id: uuid (v7), origin_package_id: uuid (v7)} | yes |
+| `data` | object {tamagotchi_id: uuid (v7), origin_owner_id: uuid (v7), origin_package_id: uuid (v7)} | yes |
 
 ### TamagotchiLeveledUpEvent
 
@@ -436,18 +475,7 @@ database.
 | `occurred_at` | timestamp (ISO 8601 UTC) | yes |
 | `producer` | "tamagotchi" | yes |
 | `correlation_id` | uuid (v7) | yes |
-| `data` | object {tamagotchi_id: uuid (v7), owner_user_id: uuid (v7), level: integer [2..100], source_id: uuid (v7)} | yes |
-
-### TamagotchiOwnershipTransferredEvent
-
-| Field | Type / constraint | Required |
-|---|---|---|
-| `event_id` | uuid (v7) | yes |
-| `event_type` | "tamagotchi.ownership_transferred.v1" | yes |
-| `occurred_at` | timestamp (ISO 8601 UTC) | yes |
-| `producer` | "tamagotchi" | yes |
-| `correlation_id` | uuid (v7) | yes |
-| `data` | object {tamagotchi_id: uuid (v7), tamagotchi_name: string [1..64], combat_type: FLAME / NATURE / EARTH / ELECTRIC / WATER / SHADOW, level: integer [1..100], previous_owner_user_id: uuid (v7), new_owner_user_id: uuid (v7), reason: "BATTLE_LOSS", battle_id: uuid (v7)} | yes |
+| `data` | object {tamagotchi_id: uuid (v7), holder_user_ids: array<uuid (v7)> [1..5], level: integer [2..100], source_id: uuid (v7)} | yes |
 
 ### TamagotchiPage
 
@@ -455,27 +483,6 @@ database.
 |---|---|---|
 | `items` | array<Tamagotchi> [0..100] | yes |
 | `next_cursor` | string [1..2048] or null | yes |
-
-### TransferInput
-
-| Field | Type / constraint | Required |
-|---|---|---|
-| `from_user_id` | uuid (v7) | yes |
-| `to_user_id` | uuid (v7) | yes |
-| `reason` | BATTLE_LOSS | yes |
-| `reference_id` | uuid (v7) | yes |
-| `engagement_id` | uuid (v7) | yes |
-
-### TransferReceipt
-
-| Field | Type / constraint | Required |
-|---|---|---|
-| `id` | uuid (v7) | yes |
-| `previous_owner_user_id` | uuid (v7) | yes |
-| `owner_user_id` | uuid (v7) | yes |
-| `role` | "SECONDARY" | yes |
-| `version` | integer [1..2147483647] | yes |
-| `transferred_at` | timestamp (ISO 8601 UTC) | yes |
 
 ### TypeList
 
@@ -527,6 +534,8 @@ database.
 | `winner_id` | uuid (v7) or null | yes |
 | `loser_id` | uuid (v7) or null | yes |
 | `settlement_status` | NOT_READY / PENDING / PARTIAL / DELIVERED / NOT_APPLICABLE / NEEDS_ATTENTION | yes |
+| `access_grant_status` | NOT_READY / PENDING / GRANTED / ALREADY_HOLDER / CAP_COMPENSATED / NOT_APPLICABLE / NEEDS_ATTENTION | yes |
+| `engagement_id` | uuid (v7) or null | yes |
 | `version` | integer [1..2147483647] | yes |
 
 ### BattleAccept
@@ -558,7 +567,7 @@ database.
 | `occurred_at` | timestamp (ISO 8601 UTC) | yes |
 | `producer` | "battle" | yes |
 | `correlation_id` | uuid (v7) | yes |
-| `data` | object {battle_id: uuid (v7), winner_id: uuid (v7), loser_id: uuid (v7), settlement_status: "PENDING"} | yes |
+| `data` | object {battle_id: uuid (v7), winner_id: uuid (v7), loser_id: uuid (v7), staked_tamagotchi_id: uuid (v7), settlement_status: "PENDING", access_grant_status: "PENDING"} | yes |
 
 ### BattleInput
 
@@ -1237,7 +1246,7 @@ database.
 |---|---|---|
 | `id` | uuid (v7) | yes |
 | `user_id` | uuid (v7) | yes |
-| `type` | FRIEND_REQUEST / PLAYER_NEARBY / BATTLE_REQUEST / TAMAGOTCHI_CAPTURED / GUILD_INVITATION / RAID_STARTED | yes |
+| `type` | FRIEND_REQUEST / PLAYER_NEARBY / BATTLE_REQUEST / TAMAGOTCHI_SHARED / GUILD_INVITATION / RAID_STARTED | yes |
 | `event_id` | uuid (v7) | yes |
 | `params` | map<string, ['string', 'number', 'boolean']> (bounded by schema) | yes |
 | `created_at` | timestamp (ISO 8601 UTC) | yes |
@@ -1255,14 +1264,14 @@ database.
 
 | Field | Type / constraint | Required |
 |---|---|---|
-| `muted_categories` | array<FRIEND_REQUEST / PLAYER_NEARBY / BATTLE_REQUEST / TAMAGOTCHI_CAPTURED / GUILD_INVITATION / RAID_STARTED> [0..6] | yes |
+| `muted_categories` | array<FRIEND_REQUEST / PLAYER_NEARBY / BATTLE_REQUEST / TAMAGOTCHI_SHARED / GUILD_INVITATION / RAID_STARTED> [0..6] | yes |
 | `version` | integer [1..2147483647] | yes |
 
 ### PreferencesInput
 
 | Field | Type / constraint | Required |
 |---|---|---|
-| `muted_categories` | array<FRIEND_REQUEST / PLAYER_NEARBY / BATTLE_REQUEST / TAMAGOTCHI_CAPTURED / GUILD_INVITATION / RAID_STARTED> [0..6] | yes |
+| `muted_categories` | array<FRIEND_REQUEST / PLAYER_NEARBY / BATTLE_REQUEST / TAMAGOTCHI_SHARED / GUILD_INVITATION / RAID_STARTED> [0..6] | yes |
 
 ### ReadAllInput
 
