@@ -16,3 +16,9 @@
 [submodule "services/package-registry"]
 	path = services/package-registry
 	url = https://github.com/MihaelaCatan04/package-registry-service.git
+[submodule "services/user-management"]
+	path = services/user-management
+	url = https://github.com/PatriciaMoraru/user-management.git
+[submodule "services/battle"]
+	path = services/battle
+	url = https://github.com/PatriciaMoraru/battle.git
